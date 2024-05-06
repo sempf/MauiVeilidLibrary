@@ -27,9 +27,33 @@ public class JsonApi
         _inFlightRequests = new Dictionary<int, TaskCompletionSource<object>>();
     }
 
-    private void CleanupClose()
+    private async Task _CleanupClose()
     {
-        // Cleanup and close the connection
+        await _lock.WaitAsync();
+        try
+        {
+            _reader = null;
+            Debug.Assert(_writer != null);
+            try
+            {
+                _writer.Close();
+                await _writer.WaitUntilClosed();
+            }
+            catch
+            {
+                // Already closed
+            }
+            _writer = null;
+
+            foreach (var request in _inFlightRequests.Values)
+            {
+                request.TrySetCanceled();
+            }
+        }
+        finally
+        {
+            _lock.Release();
+        }
     }
 
     public bool IsDone()
@@ -39,8 +63,34 @@ public class JsonApi
 
     public async Task Release()
     {
-        // Release any resources
+        // Take the task
+        await lockObj.WaitAsync();
+        try
+        {
+            if (handleRecvMessagesTask == null)
+            {
+                return;
+            }
+            Task handleRecvMessagesTask = this.handleRecvMessagesTask;
+            this.handleRecvMessagesTask = null;
+        }
+        finally
+        {
+            lockObj.Release();
+        }
+        // Cancel it
+        handleRecvMessagesTask.Cancel();
+        try
+        {
+            await handleRecvMessagesTask;
+        }
+        catch (TaskCanceledException)
+        {
+            // Handle cancellation
+        }
+        done = true;
     }
+
 
     // Other methods...
 
